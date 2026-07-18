@@ -29,7 +29,8 @@ in {
       description = ''
         Path to the .env file read by the bot. Must contain at least:
           DISCORD_TOKEN, CONSOLE_CHANNEL_ID, CHAT_CHANNEL_ID,
-          ALLOWLIST_PATH, DATA_PATH, CHAT_REGEX (optional).
+          ALLOWLIST_PATH, DATA_PATH, CHAT_REGEX (optional),
+          MODS_PATH (optional, defaults to ${DATA_PATH}/mods).
         The module injects SERVER_BIN automatically; do not set it here.
       '';
     };
@@ -37,13 +38,13 @@ in {
     port = lib.mkOption {
       type = lib.types.port;
       default = 42420;
-      description = "UDP port the server listens on (for firewall rules).";
+      description = "UDP+TCP port the server listens on (for firewall rules).";
     };
 
     openFirewall = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Open the UDP port in the firewall.";
+      description = "Open the UDP+TCP port in the firewall.";
     };
 
     user = lib.mkOption {
@@ -82,5 +83,6 @@ in {
     };
 
     networking.firewall.allowedUDPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
+    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
   };
 }

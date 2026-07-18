@@ -15,12 +15,14 @@ CHAT_CHANNEL_ID = int(os.environ["CHAT_CHANNEL_ID"])
 ALLOWLIST_PATH = Path(os.environ["ALLOWLIST_PATH"])
 SERVER_BIN = os.environ["SERVER_BIN"]
 DATA_PATH = os.environ["DATA_PATH"]
-CHAT_REGEX = os.environ.get("CHAT_REGEX", "")
+MODS_PATH = Path(os.environ.get("MODS_PATH", str(Path(DATA_PATH) / "mods"))).resolve()
+CHAT_REGEX = os.environ.get("CHAT_REGEX", "Server Chat")
 CHAT_PATTERN = re.compile(CHAT_REGEX) if CHAT_REGEX else None
 
 FLUSH_INTERVAL = 0.5
 MAX_MSG_LEN = 2000
 MAX_BUFFER_LINES = 200
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 def read_allowlist():
@@ -36,6 +38,17 @@ def read_allowlist():
         except ValueError:
             pass
     return ids
+
+
+def safe_mod_path(filename):
+    if not filename or "/" in filename or "\\" in filename or filename.startswith("."):
+        return None
+    candidate = (MODS_PATH / filename).resolve()
+    try:
+        candidate.relative_to(MODS_PATH)
+    except ValueError:
+        return None
+    return candidate
 
 
 class ServerProcess:
@@ -96,7 +109,10 @@ class ServerProcess:
             text = line.decode(errors="replace").rstrip("\n")
             await console_buffer.push(text)
             if CHAT_PATTERN and CHAT_PATTERN.search(text):
-                await chat_buffer.push(text)
+                idx = text.find("|")
+                chat_text = text[idx + 1:].lstrip() if idx >= 0 else text
+                if chat_text:
+                    await chat_buffer.push(chat_text)
 
     async def _drain_pump(self):
         if self._pump_task is None:
@@ -174,10 +190,10 @@ async def on_ready():
 async def on_message(message):
     if message.author.bot:
         return
-    if message.channel.id != CONSOLE_CHANNEL_ID:
-        return
     if message.content.startswith("!"):
         await handle_bot_command(message)
+        return
+    if message.channel.id != CONSOLE_CHANNEL_ID:
         return
     if message.author.id not in read_allowlist():
         return
@@ -187,22 +203,116 @@ async def on_message(message):
 
 
 async def handle_bot_command(message):
-    if message.author.id not in read_allowlist():
-        return
-    parts = message.content.split(maxsplit=1)
+    parts = message.content.split(maxsplit=2)
     cmd = parts[0].lower()
+    is_op = message.author.id in read_allowlist()
+
+    if cmd == "!mod":
+        await handle_mod_command(message, parts[1:] if len(parts) > 1 else [], is_op)
+        return
+
     if cmd == "!start":
+        if not is_op:
+            return
         ok, info = await server.start()
         await message.channel.send(info)
     elif cmd == "!stop":
+        if not is_op:
+            return
         ok, info = await server.stop()
         await message.channel.send(info)
     elif cmd == "!status":
         await message.channel.send("running" if server.running else "stopped")
     else:
         await message.channel.send(
-            "commands: !start, !stop, !status — anything else is forwarded to the server console"
+            "commands: !start, !stop, !status, !mod {add|remove|list|get} [filename]\n"
+            "in #console, anything else (from auth'd users) is forwarded to the server"
         )
+
+
+async def handle_mod_command(message, args, is_op):
+    if not args:
+        await message.channel.send("usage: !mod {add|remove|list|get} [filename]")
+        return
+    sub = args[0].lower()
+    rest = args[1] if len(args) > 1 else ""
+
+    if sub == "add":
+        if not is_op:
+            return
+        await mod_add(message)
+    elif sub == "remove":
+        if not is_op:
+            return
+        if not rest:
+            await message.channel.send("usage: !mod remove <filename>")
+            return
+        await mod_remove(message, rest)
+    elif sub == "list":
+        await mod_list(message)
+    elif sub == "get":
+        if not rest:
+            await message.channel.send("usage: !mod get <filename>")
+            return
+        await mod_get(message, rest)
+    else:
+        await message.channel.send("usage: !mod {add|remove|list|get} [filename]")
+
+
+async def mod_add(message):
+    if not message.attachments:
+        await message.channel.send("attach a .zip file to add a mod")
+        return
+    MODS_PATH.mkdir(parents=True, exist_ok=True)
+    results = []
+    for att in message.attachments:
+        if not att.filename.lower().endswith(".zip"):
+            results.append(f"{att.filename}: skipped (not a .zip)")
+            continue
+        target = safe_mod_path(att.filename)
+        if target is None:
+            results.append(f"{att.filename}: invalid filename")
+            continue
+        await att.save(target)
+        results.append(f"{att.filename}: saved ({att.size} bytes)")
+    await message.channel.send("\n".join(results))
+
+
+async def mod_remove(message, filename):
+    target = safe_mod_path(filename)
+    if target is None or not target.is_file():
+        await message.channel.send(f"no mod named {filename}")
+        return
+    target.unlink()
+    await message.channel.send(f"removed {target.name}")
+
+
+async def mod_list(message):
+    if not MODS_PATH.exists():
+        await message.channel.send("no mods")
+        return
+    files = sorted(f.name for f in MODS_PATH.iterdir() if f.is_file())
+    if not files:
+        await message.channel.send("no mods")
+        return
+    text = "\n".join(files)
+    if len(text) > MAX_MSG_LEN - 10:
+        text = text[: MAX_MSG_LEN - 13] + "..."
+    await message.channel.send(f"```\n{text}\n```")
+
+
+async def mod_get(message, filename):
+    target = safe_mod_path(filename)
+    if target is None or not target.is_file():
+        await message.channel.send(f"no mod named {filename}")
+        return
+    size = target.stat().st_size
+    if size > MAX_UPLOAD_BYTES:
+        await message.channel.send(
+            f"{target.name} is {size // (1024 * 1024)}MB, too big (limit 25MB)"
+        )
+        return
+    await message.channel.send(file=discord.File(target))
 
 
 def main():
