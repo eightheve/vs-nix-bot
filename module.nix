@@ -36,7 +36,7 @@ in {
 
     port = lib.mkOption {
       type = lib.types.port;
-      default = 12000;
+      default = 42420;
       description = "UDP port the server listens on (for firewall rules).";
     };
 
