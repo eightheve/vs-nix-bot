@@ -30,7 +30,7 @@ in {
         Path to the .env file read by the bot. Must contain at least:
           DISCORD_TOKEN, CONSOLE_CHANNEL_ID, CHAT_CHANNEL_ID,
           ALLOWLIST_PATH, DATA_PATH, CHAT_REGEX (optional),
-          MODS_PATH (optional, defaults to ${DATA_PATH}/mods).
+          MODS_PATH (optional, defaults to $DATA_PATH/mods).
         The module injects SERVER_BIN automatically; do not set it here.
       '';
     };
