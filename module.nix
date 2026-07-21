@@ -2,7 +2,7 @@
 
 let
   cfg = config.services.vintagestory;
-  botEnv = pkgs.python3.withPackages (p: [ p.discordpy p.python-dotenv ]);
+  botEnv = pkgs.python3.withPackages (p: [ p.discordpy p.python-dotenv p.aiohttp ]);
   botScript = ./bot/bot.py;
 in {
   options.services.vintagestory = {

@@ -2,8 +2,10 @@ import asyncio
 import os
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 
+import aiohttp
 import discord
 from dotenv import load_dotenv
 
@@ -23,6 +25,8 @@ FLUSH_INTERVAL = 0.5
 MAX_MSG_LEN = 2000
 MAX_BUFFER_LINES = 200
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+DOWNLOAD_CHUNK = 64 * 1024
 
 
 def read_allowlist():
@@ -240,7 +244,17 @@ async def handle_mod_command(message, args, is_op):
     if sub == "add":
         if not is_op:
             return
-        await mod_add(message)
+        rest = rest.strip()
+        if rest.startswith("<") and rest.endswith(">"):
+            rest = rest[1:-1]
+        if rest.startswith(("http://", "https://")):
+            await mod_add_url(message, rest)
+        elif message.attachments:
+            await mod_add_attachments(message)
+        else:
+            await message.channel.send(
+                "attach a .zip file, or provide a URL: !mod add <url>"
+            )
     elif sub == "remove":
         if not is_op:
             return
@@ -260,9 +274,10 @@ async def handle_mod_command(message, args, is_op):
 
 
 async def mod_add(message):
-    if not message.attachments:
-        await message.channel.send("attach a .zip file to add a mod")
-        return
+    await mod_add_attachments(message)
+
+
+async def mod_add_attachments(message):
     MODS_PATH.mkdir(parents=True, exist_ok=True)
     results = []
     for att in message.attachments:
@@ -276,6 +291,50 @@ async def mod_add(message):
         await att.save(target)
         results.append(f"{att.filename}: saved ({att.size} bytes)")
     await message.channel.send("\n".join(results))
+
+
+async def mod_add_url(message, url):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        await message.channel.send("only http(s) URLs are supported")
+        return
+    filename = os.path.basename(parsed.path)
+    if not filename or not filename.lower().endswith(".zip"):
+        await message.channel.send("couldn't determine a .zip filename from the URL")
+        return
+    target = safe_mod_path(filename)
+    if target is None:
+        await message.channel.send(f"invalid filename: {filename}")
+        return
+    MODS_PATH.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        await message.channel.send(f"{filename} already exists, not overwriting")
+        return
+    tmp = target.with_suffix(target.suffix + ".part")
+    status = await message.channel.send(f"downloading {filename}...")
+    total = 0
+    try:
+        timeout = aiohttp.ClientTimeout(total=300)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    await status.edit(content=f"download failed: HTTP {resp.status}")
+                    return
+                with open(tmp, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(DOWNLOAD_CHUNK):
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_BYTES:
+                            f.close()
+                            tmp.unlink(missing_ok=True)
+                            await status.edit(content=f"download exceeded {MAX_DOWNLOAD_BYTES // (1024 * 1024)}MB limit")
+                            return
+                        f.write(chunk)
+        tmp.rename(target)
+        await status.edit(content=f"{target.name}: downloaded ({total} bytes)")
+    except Exception as e:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+        await status.edit(content=f"download failed: {e}")
 
 
 async def mod_remove(message, filename):
