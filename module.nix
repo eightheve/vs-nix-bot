@@ -60,6 +60,7 @@ in {
       group = cfg.user;
       home = cfg.dataDir;
       createHome = false;
+      useDefaultShell = true;
     };
     users.groups.${cfg.user} = { };
 
