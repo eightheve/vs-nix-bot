@@ -8,11 +8,11 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "vintagestory-server";
-  version = "1.22.3";
+  version = "1.22.6";
 
   src = fetchurl {
     url = "https://cdn.vintagestory.at/gamefiles/stable/vs_server_linux-x64_${finalAttrs.version}.tar.gz";
-    hash = "sha256-6uOin1gMqeQzTi+aoSy9vKSNoZ7SUMyNZ5NH9S6a53I=";
+    hash = "sha256-r8jr3JKSvBSZZIKUaGM7vaYh+0hhIt9A06FEJT90ook=";
   };
 
   nativeBuildInputs = [ makeWrapper ];
@@ -25,6 +25,25 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p $out/share/vintagestory $out/bin
     tar xf $src -C $out/share/vintagestory
     rm -f $out/share/vintagestory/server.sh
+    cat > $out/share/vintagestory/VintagestoryServer.runtimeconfig.json << EOF
+    {
+      "runtimeOptions": {
+        "tfm": "net10.0",
+        "framework": {
+          "name": "Microsoft.NETCore.App",
+          "version": "10.0.0"
+        },
+        "configProperties": {
+          "System.Reflection.Metadata.MetadataUpdater.IsSupported": false,
+          "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": false,
+          "System.Runtime.TieredPGO": true,
+          "System.GC.Server": true,
+          "System.GC.Concurrent": true,
+          "System.GC.HeapCount": 6
+        }
+      }
+    }
+    EOF
 
     runHook postInstall
   '';
